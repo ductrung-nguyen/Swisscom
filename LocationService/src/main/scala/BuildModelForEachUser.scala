@@ -3,13 +3,14 @@ package main.scala.test
 import org.apache.spark._
 import org.apache.spark.SparkContext._
 import org.apache.spark.rdd._
-//import scala.collection.mutable._
-import scala.collection.immutable._;
-import scala.collection.immutable.Seq;
+import scala.collection.immutable._
+import scala.collection.immutable.Seq
+import main.scala.core._
+import main.scala.core.KmeanModelBuilder
 
 
 
-object Test {
+object BuildModelForEachUser {
     
     val TIME_INTERVAL = 60 // minutes
     val TOP_K = 3
@@ -20,13 +21,16 @@ object Test {
             .setAppName("test location service")
 
         val context = new SparkContext(conf)
-        val input = "/Users/loveallufev/Documents/MATLAB/mobile-locations-training.txt"
-        //val input = "/Users/loveallufev/Documents/MATLAB/user/training-user21.txt"
+        //val input = "/Users/loveallufev/Documents/MATLAB/mobile-locations-training.txt"
+        val input = "/Users/loveallufev/Documents/MATLAB/data/newdata/part*"
         //val input = "/Users/loveallufev/Documents/MATLAB/user/smalltraining21.txt"
         //val input = "/Users/loveallufev/Documents/MATLAB/fakedata"
+        val output =  "/Users/loveallufev/Documents/MATLAB/output/model21"
 
-        val data = context.textFile(input, 1)
+        var data = context.textFile(input, 1)
+        data = data.filter(line => line.startsWith("21|"));
 
+        /*
         val sequences = data.map(line => {
             try{
             val values = line.split(',')
@@ -238,23 +242,13 @@ object Test {
 	    
         println("KMEAN - OK ----------------------------------------")
         
-        var models = modelsData.map{
-            case (centerIndex, matrix) => {
-                var model = new LocationModel(TIME_INTERVAL)
-                model.modelID = centerIndex
-                model.construct(matrix)
-                model
-            }
-        }.toArray
+        val modelCenter = new ModelCenter(modelsData, TIME_INTERVAL)
         
+        modelCenter.saveToFile(output)
         
-
-        println("Number of models: %d".format(models.length))
+        println("Number of models: %d".format(modelCenter.numberOfModel))
         
-        models.foreach (x => { x.printInfo; println("----------------\n") } )
-	    //kPoints.foreach(x => {
-	    //    println("%d -> (%s)".format(x._1, x._2.mkString(",")))
-	    //})
+        modelCenter.printInfo
 	    
 	    var previousPos = new Array[(Int, Int)](3)
 	    
@@ -262,122 +256,26 @@ object Test {
 	    previousPos.update(1, (10*60+26, 548))
 	    previousPos.update(2, (12*60 + 49, 587))
 	    
-	    println("Predict:%s\n\n".format(predict(previousPos, 18*60+24, models.toVector).mkString(",")))
+	    println("Predict:%s\n\n".format(modelCenter.predict(previousPos, 18*60+24).mkString(",")))
 	    
 	    previousPos.update(0, (5*60+33, 550))
 	    previousPos.update(1, (9*60+48, 548))
 	    previousPos.update(2, (16*60 + 32, 548))
-	    println("Predict:%s\n\n".format(predict(previousPos, 19*60+8, models.toVector).mkString(",")))
+	    println("Predict:%s\n\n".format(modelCenter.predict(previousPos, 19*60+8).mkString(",")))
 	    
 	    previousPos.update(0, (13*60 + 30, 587))
 	    previousPos.update(1, (15*60 + 30, 598))
 	    previousPos.update(2, (18*60 + 15, 549))
-	    println("Predict:%s\n\n".format(predict(previousPos, 19*60 + 33, models.toVector).mkString(",")))
+	    println("Predict:%s\n\n".format(modelCenter.predict(previousPos, 19*60 + 33).mkString(",")))
+	    * 
+	    */
+        //MostFrequencyModelBuilder.build(data);
+        //MostFrequencyModelBuilder.saveModelToFile("/Users/loveallufev/Documents/MATLAB/output/model21")
+        KmeanModelBuilder.build(data);
+        KmeanModelBuilder.saveModelToFile("/Users/loveallufev/Documents/MATLAB/output/model21")
 
-    }
-    
-    def distanceFunction(x : Array[(Int, Int)], y : Array[(Int, Int)]) : Double = {
-        val length = x.length
-	           var distance : Double = 0
-	           for (j <- 0 to length-1){
-	                 distance = distance + (x(j)._1 - y(j)._1)*(x(j)._1 - y(j)._1)    
-	           }
-	    distance
-    }
-    
-    def findClosetCenter[T]( point: T, centers: Array[(Int, T)])(distanceFunction : (T,T) => Double) : Int = {
-        var closetCenterID = -1
-        var minDistance = distanceFunction(centers.head._2, point) + 1
-        centers.foreach {
-            case (key, value) => {
-                val distance = distanceFunction(value, point) 
-                if (distance < minDistance){
-                    closetCenterID = key
-                    minDistance = distance
-                }
-            }
-        }
-        closetCenterID
-    }
-    
-    def predict(previousPos : Array[(Int, Int)], nextTime : Int,
-            models : Vector[LocationModel]
-            ) : Array[(Int, Double)] = {	// Array of (time, Location) ==> Next location
-    	var bestModelID = -1
-    	var bestModel : LocationModel = null
-    	var maxProb : Double = -1
-    	
-        models.foreach (model => {
-            
-            var prob = model.calculateProb(previousPos) 
-            println("model:%d prob:%f predict:%s".format(model.modelID, prob, model.predict(nextTime).mkString(",")))
-    		  if (prob > maxProb){
-    		       maxProb = prob
-    		       bestModelID = model.modelID
-    		       bestModel = model
-    		  }
-            
-            println("\n---------------------")
-    		})
-    		
-    		
-    	
-    	println("bestModelID=%d MatchingPercentage=%f".format(bestModelID, maxProb))
-    	bestModel.predict(nextTime)
-    	
     }
 }
 
 
-class LocationModel(val TIME_INTERVAL : Int) {
-    var modelID = -1
-    var minCellID = 0
-    var maxCellID = 0
-    var data : Array[Array[(Int, Double)]] = new Array[Array[(Int, Double)]](60*24/TIME_INTERVAL)
-    
-    def construct(rawModelData : Array[Array[(Int, Int)]]) = {
-        var length = rawModelData.length
-        data = rawModelData.map {
-            locationCandidates => {
-                var sum = locationCandidates.foldLeft(0)((x,y) => (x + y._2))
-                var temp = locationCandidates.sortBy{ case (location, freq) => location }
-                temp.map { case (loc, freq) => (loc, freq*1.0/sum) }.toArray.sortBy(x => -x._2)// sort desc by probability
-            }
-        }.toArray
-    }
-    
-    private def findLocationInTimeInterval (timeInterval : Int, location : Int) : Double = {
-        val locationCandidates = data(timeInterval)
-        var result = locationCandidates.find{ case (loc, proba) => {
-            location == loc
-        }}
-        println("result in findLocationInTimeInterval:%s".format(result))
-        result match {
-            case Some(d) => d._2
-            case None => 0
-        }
-    }
-    
-    /***
-     * Output is the probability
-     */
-    def calculateProb(previousPos : Array[(Int, Int)]) : Double = {		// array[Time, location]
-        var sum : Double = 0
-        previousPos.foreach {
-            case (prevTime, prevLoc) => {
-                sum = sum + findLocationInTimeInterval(prevTime/ TIME_INTERVAL, prevLoc)
-            }
-        }
-        sum
-    }
-    
-    def predict(nextTime : Int) : Array[(Int, Double)] = {
-        data(nextTime/TIME_INTERVAL)
-    }
-    
-    def printInfo() = {
-        println("Model : %d\nData:\n".format(modelID))
-        data.foreach(arr => print("(%s)".format(arr.mkString(","))))
-        println()
-    }
-}
+
